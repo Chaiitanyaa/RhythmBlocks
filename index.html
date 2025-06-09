@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Cube Music Player</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; }
+    #webcam { margin-top: 10px; }
+    #label { font-size: 18px; margin: 10px; }
+    button { padding: 10px 20px; font-size: 18px; margin: 10px; }
+  </style>
+</head>
+<body>
+  <h2>🎵 Cube Music Board</h2>
+  <video id="webcam" autoplay playsinline width="224" height="224"></video>
+  <p id="label">Waiting for cube detection...</p>
+  <button onclick="connectSerial()">Connect Arduino</button>
+  <button onclick="playSequence()">▶️ Play</button>
+
+  <script type="module">
+    import * as tmImage from "https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js";
+
+    const URL = "YOUR_MODEL_URL_HERE"; // include trailing slash
+    const modelURL = URL + "model.json";
+    const metadataURL = URL + "metadata.json";
+
+    let model, webcam;
+    const slotStates = Array(8).fill(null);  // Stores detected cube for each slot
+    let port, reader;
+    let currentDetected = "";
+
+    async function connectSerial() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 9600 });
+        reader = port.readable.getReader();
+        console.log("Serial connected.");
+        readSlotState();
+      } catch (err) {
+        console.error("Serial connection failed:", err);
+      }
+    }
+
+    async function readSlotState() {
+      const decoder = new TextDecoder();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const line = decoder.decode(value).trim();
+        if (line.startsWith("Slot")) {
+          const match = line.match(/Slot (\d+)/);
+          if (match) {
+            const slot = parseInt(match[1]) - 1;
+            if (slot >= 0 && slot < 8 && currentDetected) {
+              slotStates[slot] = currentDetected;
+              console.log(`Stored ${currentDetected} in Slot ${slot + 1}`);
+            }
+          }
+        }
+      }
+    }
+
+    async function init() {
+      model = await tmImage.load(modelURL, metadataURL);
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      webcam = document.getElementById("webcam");
+      webcam.srcObject = stream;
+      webcam.addEventListener("loadeddata", predictLoop);
+    }
+
+    async function predictLoop() {
+      const prediction = await model.predict(webcam);
+      const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
+      currentDetected = top.className;
+      document.getElementById("label").innerText =
+        `Detected: ${top.className} (${(top.probability * 100).toFixed(1)}%)`;
+      setTimeout(predictLoop, 500);
+    }
+
+    function playSound(instrument, note) {
+      const audio = new Audio(`sounds/${instrument}/${note}.mp3`);
+      audio.play();
+      console.log(`Playing: ${instrument} - ${note}`);
+    }
+
+    async function playSequence() {
+      for (let i = 0; i < 8; i++) {
+        const label = slotStates[i];
+        if (label) {
+          // "BlueCubeWithF : Piano F"
+          const parts = label.split(":");
+          const readable = parts.length > 1 ? parts[1].trim() : label;
+          const [instrument, note] = readable.split(" ");
+          playSound(instrument.toLowerCase(), note.toUpperCase());
+          await new Promise(resolve => setTimeout(resolve, 800)); // delay between notes
+        }
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
