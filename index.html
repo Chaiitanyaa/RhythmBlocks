@@ -1,100 +1,117 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Cube Music Player</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; }
-    #webcam { margin-top: 10px; }
-    #label { font-size: 18px; margin: 10px; }
-    button { padding: 10px 20px; font-size: 18px; margin: 10px; }
-  </style>
+  <title>RhythmBeats - Music with Cubes</title>
 </head>
 <body>
-  <h2>🎵 Cube Music Board</h2>
-  <video id="webcam" autoplay playsinline width="224" height="224"></video>
-  <p id="label">Waiting for cube detection...</p>
-  <button onclick="connectSerial()">Connect Arduino</button>
-  <button onclick="playSequence()">▶️ Play</button>
+  <h1>🎵 RhythmBeats: Music Composition Board</h1>
 
-  <script type="module">
-    import * as tmImage from "https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js";
+  <!-- Webcam canvas -->
+  <canvas id="canvas" width="224" height="224"></canvas><br>
 
-    const URL = "YOUR_MODEL_URL_HERE"; // include trailing slash
-    const modelURL = URL + "model.json";
-    const metadataURL = URL + "metadata.json";
+  <!-- Controls -->
+  <button id="connect">🔌 Connect Arduino</button>
+  <button id="play">▶️ Play Sequence</button>
+  <p id="status">Status: Not connected</p>
 
-    let model, webcam;
-    const slotStates = Array(8).fill(null);  // Stores detected cube for each slot
-    let port, reader;
+  <!-- TensorFlow + Teachable Machine -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.4/dist/teachablemachine-image.min.js"></script>
+
+  <script>
+    const URL = "model/"; // Your model folder containing model.json, metadata.json, weights.bin
+    let model, webcam, port, reader, writer;
+    const slotStates = Array(8).fill(null);  // Slot 0-7 (Slot 1 = index 0)
     let currentDetected = "";
 
-    async function connectSerial() {
+    async function init() {
+      try {
+        model = await tmImage.load(URL + "model.json", URL + "metadata.json");
+        webcam = new tmImage.Webcam(224, 224, true);
+        await webcam.setup();
+        await webcam.play();
+        webcam.canvas = document.getElementById("canvas");
+        window.requestAnimationFrame(loop);
+      } catch (err) {
+        document.getElementById("status").textContent = "❌ Webcam error: " + err.message;
+        console.error(err);
+      }
+    }
+
+    async function loop() {
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+      const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
+      if (top.probability > 0.85) {
+        currentDetected = top.className.trim(); // e.g. "BlueCubeWithC : Piano C"
+      }
+    }
+
+    async function connectToArduino() {
       try {
         port = await navigator.serial.requestPort();
         await port.open({ baudRate: 9600 });
-        reader = port.readable.getReader();
-        console.log("Serial connected.");
+        const textDecoder = new TextDecoderStream();
+        const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+        reader = textDecoder.readable.getReader();
+
+        const textEncoder = new TextEncoderStream();
+        const writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+        writer = textEncoder.writable.getWriter();
+
         readSlotState();
+        document.getElementById("status").textContent = "✅ Connected to Arduino";
       } catch (err) {
+        document.getElementById("status").textContent = "❌ Connection failed";
         console.error("Serial connection failed:", err);
       }
     }
 
     async function readSlotState() {
-      const decoder = new TextDecoder();
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const line = decoder.decode(value).trim();
+        const line = value.trim();
         if (line.startsWith("Slot")) {
           const match = line.match(/Slot (\d+)/);
           if (match) {
             const slot = parseInt(match[1]) - 1;
             if (slot >= 0 && slot < 8 && currentDetected) {
               slotStates[slot] = currentDetected;
-              console.log(`Stored ${currentDetected} in Slot ${slot + 1}`);
+              console.log(`Stored "${currentDetected}" in Slot ${slot + 1}`);
             }
           }
         }
       }
     }
 
-    async function init() {
-      model = await tmImage.load(modelURL, metadataURL);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      webcam = document.getElementById("webcam");
-      webcam.srcObject = stream;
-      webcam.addEventListener("loadeddata", predictLoop);
-    }
-
-    async function predictLoop() {
-      const prediction = await model.predict(webcam);
-      const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
-      currentDetected = top.className;
-      document.getElementById("label").innerText =
-        `Detected: ${top.className} (${(top.probability * 100).toFixed(1)}%)`;
-      setTimeout(predictLoop, 500);
-    }
-
     function playSound(instrument, note) {
       const audio = new Audio(`sounds/${instrument}/${note}.mp3`);
       audio.play();
-      console.log(`Playing: ${instrument} - ${note}`);
+      console.log(`Playing: ${instrument}/${note}`);
     }
 
     async function playSequence() {
       for (let i = 0; i < 8; i++) {
         const label = slotStates[i];
         if (label) {
-          // "BlueCubeWithF : Piano F"
           const parts = label.split(":");
-          const readable = parts.length > 1 ? parts[1].trim() : label;
-          const [instrument, note] = readable.split(" ");
-          playSound(instrument.toLowerCase(), note.toUpperCase());
-          await new Promise(resolve => setTimeout(resolve, 800)); // delay between notes
+          if (parts.length > 1) {
+            const [instrument, note] = parts[1].trim().split(" ");
+            playSound(instrument.toLowerCase(), note.toUpperCase());
+            await new Promise(resolve => setTimeout(resolve, 800));
+          }
         }
       }
     }
+
+    document.getElementById("connect").addEventListener("click", connectToArduino);
+    document.getElementById("play").addEventListener("click", playSequence);
 
     init();
   </script>
