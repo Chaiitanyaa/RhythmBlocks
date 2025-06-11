@@ -183,7 +183,7 @@
       const prediction = await model.predict(webcam.canvas);
       const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
 
-      if (top.probability > 0.85) {
+      if (top.probability > 0.8) {
         const label = top.className.trim();
 
         if (!label.includes("Empty") || !label.includes("None")) {
