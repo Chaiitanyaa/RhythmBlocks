@@ -1,92 +1,60 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>RhythmBeats - Music with Cubes</title>
+  <title>🎵 RhythmBeats - Music Composition Board</title>
   <style>
     body {
       font-family: sans-serif;
-      padding: 20px;
       text-align: center;
+      margin: 20px;
     }
-    canvas {
-      border: 1px solid #ccc;
-      margin-bottom: 20px;
+    #slotContainer {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    .slot {
+      border: 2px solid #333;
+      border-radius: 10px;
+      width: 100px;
+      height: 100px;
+      padding: 10px;
+      background-color: #f9f9f9;
     }
     button {
       margin: 5px;
-      padding: 10px 20px;
+      padding: 10px 15px;
       font-size: 16px;
-    }
-    #slotGrid {
-      display: grid;
-      grid-template-columns: repeat(8, 1fr);
-      gap: 10px;
-      margin-top: 20px;
-    }
-    .slot {
-      background-color: #f0f0f0;
-      border: 2px solid #888;
-      border-radius: 10px;
-      padding: 10px;
-      min-height: 80px;
-    }
-    .slot h4 {
-      margin: 0;
-      font-size: 18px;
-    }
-    .slot p {
-      margin-top: 5px;
-      font-size: 14px;
-      color: #333;
     }
   </style>
 </head>
 <body>
   <h1>🎵 RhythmBeats: Music Composition Board</h1>
 
-  <!-- Webcam canvas -->
   <canvas id="canvas" width="224" height="224"></canvas><br>
 
-  <!-- Controls -->
   <button id="connect">🔌 Connect Arduino</button>
-  <button id="read">🔍 Read Slots</button>
+  <button id="read">📖 Read Slots</button>
   <button id="play">▶️ Play Sequence</button>
+  <button id="reset">♻️ Reset</button>
+
   <p id="status">Status: Not connected</p>
 
-  <!-- Slot Grid -->
-  <div id="slotGrid">
-    <!-- Slots will be generated here -->
-  </div>
+  <div id="slotContainer"></div>
 
   <!-- TensorFlow + Teachable Machine -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.4/dist/teachablemachine-image.min.js"></script>
 
   <script>
-    const URL = "model/";
+    const URL = "model/"; // Your Teachable Machine model directory
     let model, webcam, port, reader, writer;
-    const slotStates = Array(8).fill(null);
+    const slotStates = Array(8).fill(null);  // 8 slots
     let currentDetected = "";
 
-    // Generate slot boxes in HTML
-    function generateSlots() {
-      const grid = document.getElementById("slotGrid");
-      grid.innerHTML = '';
-      for (let i = 0; i < 8; i++) {
-        const slotDiv = document.createElement("div");
-        slotDiv.className = "slot";
-        slotDiv.id = `slot-${i}`;
-        slotDiv.innerHTML = `
-          <h4>Slot ${i + 1}</h4>
-          <p>(empty)</p>
-        `;
-        grid.appendChild(slotDiv);
-      }
-    }
-
     async function init() {
-      generateSlots();
       try {
         model = await tmImage.load(URL + "model.json", URL + "metadata.json");
         webcam = new tmImage.Webcam(224, 224, true);
@@ -110,12 +78,7 @@
       const prediction = await model.predict(webcam.canvas);
       const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
       if (top.probability > 0.85) {
-        const label = top.className.trim();
-        if (label.includes("Empty") || label.includes("None")) {
-          currentDetected = null;
-        } else {
-          currentDetected = label;
-        }
+        currentDetected = top.className.trim(); // Example: "BlueCubeWithC : Piano C"
       }
     }
 
@@ -133,57 +96,69 @@
         writer = textEncoder.writable.getWriter();
 
         document.getElementById("status").textContent = "✅ Connected to Arduino";
-        listenToSerial();
+
+        readSlotState(); // Start reading automatically
       } catch (err) {
         document.getElementById("status").textContent = "❌ Connection failed";
         console.error("Serial connection failed:", err);
       }
     }
 
-    async function listenToSerial() {
+    async function readSlotState() {
       while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const line = value.trim();
-        if (line.startsWith("Slot")) {
-          const match = line.match(/Slot (\d+)/);
-          if (match) {
-            const slot = parseInt(match[1]) - 1;
-            if (slot >= 0 && slot < 8) {
-              slotStates[slot] = currentDetected || null;
-              updateSlotDisplay();
+        try {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const line = value.trim();
+          if (line.startsWith("Slot")) {
+            const match = line.match(/Slot (\d+)/);
+            if (match) {
+              const slot = parseInt(match[1]) - 1;
+              if (slot >= 0 && slot < 8 && currentDetected) {
+                if (currentDetected.includes("Empty")) {
+                  slotStates[slot] = null;
+                } else {
+                  slotStates[slot] = currentDetected;
+                }
+                updateSlotDisplay();
+              }
             }
           }
+        } catch (err) {
+          console.error("Reading slot failed:", err);
+          break;
         }
       }
     }
 
     function updateSlotDisplay() {
+      const slotContainer = document.getElementById("slotContainer");
+      slotContainer.innerHTML = "";
+
       for (let i = 0; i < 8; i++) {
+        const slotDiv = document.createElement("div");
+        slotDiv.className = "slot";
+        const slotNumber = i + 1;
         const label = slotStates[i];
-        const slotDiv = document.getElementById(`slot-${i}`);
-        const content = slotDiv.querySelector("p");
-        if (label && !label.includes("Empty") && !label.includes("None")) {
-          const parts = label.split(":");
-          content.textContent = parts.length > 1 ? parts[1].trim() : label;
-        } else {
-          content.textContent = "(empty)";
-        }
+        const note = label ? label.split(":")[1]?.trim() : "Empty";
+        slotDiv.innerHTML = `<strong>Slot ${slotNumber}</strong><br>${note}`;
+        slotContainer.appendChild(slotDiv);
       }
     }
 
     function playSound(instrument, note) {
       const audio = new Audio(`sounds/${instrument}/${note}.mp3`);
       audio.play();
+      console.log(`Playing: ${instrument}/${note}`);
     }
 
     async function playSequence() {
       for (let i = 0; i < 8; i++) {
         const label = slotStates[i];
-        if (label && !label.includes("Empty") && !label.includes("None")) {
-          const parts = label.split(":");
-          if (parts.length > 1) {
-            const [instrument, note] = parts[1].trim().split(" ");
+        if (label && !label.includes("Empty")) {
+          const parts = label.split(":")[1]?.trim().split(" ");
+          if (parts.length === 2) {
+            const [instrument, note] = parts;
             playSound(instrument.toLowerCase(), note.toUpperCase());
             await new Promise(resolve => setTimeout(resolve, 800));
           }
@@ -191,11 +166,20 @@
       }
     }
 
-    document.getElementById("connect").addEventListener("click", connectToArduino);
-    document.getElementById("play").addEventListener("click", playSequence);
-    document.getElementById("read").addEventListener("click", updateSlotDisplay);
+    function resetSlots() {
+      for (let i = 0; i < 8; i++) {
+        slotStates[i] = null;
+      }
+      updateSlotDisplay();
+    }
 
-    init();
+    // Button event listeners
+    document.getElementById("connect").addEventListener("click", connectToArduino);
+    document.getElementById("read").addEventListener("click", updateSlotDisplay);
+    document.getElementById("play").addEventListener("click", playSequence);
+    document.getElementById("reset").addEventListener("click", resetSlots);
+
+    init(); // Start webcam & model
   </script>
 </body>
 </html>
