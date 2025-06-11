@@ -123,26 +123,34 @@
     }
 
     async function readSlotState() {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const line = value.trim();
-        if (line.startsWith("Slot")) {
-          const match = line.match(/Slot (\d+)/);
-          if (match) {
-            const slot = parseInt(match[1]) - 1;
-            if (slot >= 0 && slot < 8) {
-              if (currentDetected === null) {
-                slotStates[slot] = null;
-              } else {
-                slotStates[slot] = currentDetected;
-              }
-              updateSlotDisplay();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const line = value.trim();
+
+      if (line.startsWith("Slot")) {
+        const match = line.match(/Slot (\d+)/);
+        if (match) {
+          const slot = parseInt(match[1]) - 1;
+          if (slot >= 0 && slot < 8) {
+
+            // 🌟 Get a fresh prediction from webcam when the slot is triggered
+            const prediction = await model.predict(webcam.canvas);
+            const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
+
+            if (top.probability > 0.85 && !top.className.includes("Empty") && !top.className.includes("None")) {
+              slotStates[slot] = top.className.trim();
+            } else {
+              slotStates[slot] = null; // Treat it as empty if confidence is low or it's an empty label
             }
+
+            updateSlotDisplay();
           }
         }
       }
     }
+  }
+
 
   function updateSlotDisplay() {
     const slotList = document.getElementById("slotList");
@@ -178,7 +186,7 @@
       if (top.probability > 0.85) {
         const label = top.className.trim();
 
-        if (!label.includes("Empty") && !label.includes("None")) {
+        if (!label.includes("Empty") || !label.includes("None")) {
           const parts = label.split(":");
           if (parts.length > 1) {
             const [instrument, note] = parts[1].trim().split(" ");
