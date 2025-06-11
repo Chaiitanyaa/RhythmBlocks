@@ -170,9 +170,15 @@
     }
 
     async function playSequence() {
-      for (let i = 0; i < 8; i++) {
-        const label = slotStates[i];
-        if (label && !label.includes("Empty") && !label.includes("None")) {
+    for (let i = 0; i < 8; i++) {
+      // Perform a fresh prediction
+      const prediction = await model.predict(webcam.canvas);
+      const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
+
+      if (top.probability > 0.85) {
+        const label = top.className.trim();
+
+        if (!label.includes("Empty") && !label.includes("None")) {
           const parts = label.split(":");
           if (parts.length > 1) {
             const [instrument, note] = parts[1].trim().split(" ");
@@ -180,8 +186,15 @@
             await new Promise(resolve => setTimeout(resolve, 800));
           }
         }
+      } else {
+        console.log(`Slot ${i + 1}: No confident prediction.`);
       }
+
+      // Wait a little before the next prediction to allow time for camera input to change
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
+  }
+
 
     document.getElementById("connect").addEventListener("click", connectToArduino);
     document.getElementById("play").addEventListener("click", playSequence);
