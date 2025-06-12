@@ -25,7 +25,7 @@
     button {
       padding: 10px 20px;
       font-size: 18px;
-      margin: 10px;
+      margin: 5px;
       cursor: pointer;
     }
   </style>
@@ -49,15 +49,20 @@
   <div id="slotDisplay">
     <h3>🎶 Slot Assignments</h3>
     <ul id="slotList">
-      <li>Slot 1: (empty)</li>
-      <li>Slot 2: (empty)</li>
-      <li>Slot 3: (empty)</li>
-      <li>Slot 4: (empty)</li>
-      <li>Slot 5: (empty)</li>
-      <li>Slot 6: (empty)</li>
-      <li>Slot 7: (empty)</li>
-      <li>Slot 8: (empty)</li>
+      <!-- Dynamically updated -->
     </ul>
+  </div>
+
+  <!-- Pagination and Reset Controls -->
+  <div>
+    <button id="prevPage">⬅️ Previous</button>
+    <span id="pageIndicator">Page 1</span>
+    <button id="nextPage">➡️ Next</button>
+  </div>
+
+  <div>
+    <button id="resetSlot">♻️ Reset Current Slot</button>
+    <button id="resetAll">🗑️ Reset All</button>
   </div>
 
   <!-- TensorFlow + Teachable Machine -->
@@ -65,9 +70,11 @@
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.4/dist/teachablemachine-image.min.js"></script>
 
   <script>
-    const URL = "model/"; // Your Teachable Machine model path
+    const URL = "model/";
     let model, webcam, port, reader, writer;
-    const slotStates = Array(8).fill(null);  // Slot 0-7
+    let slotStates = Array(16).fill(null); // Start with 2 pages of 8
+    let currentPage = 0;
+    const pageSize = 8;
     let currentDetected = null;
     let confirmedObject = null;
 
@@ -85,9 +92,13 @@
       }
     }
 
+    let isDelaying = false; // Add a flag to avoid re-entering loop too fast
+
     async function loop() {
-      webcam.update();
-      await predict();
+      if (!isDelaying) {
+        webcam.update();
+        await predict();
+      }
       window.requestAnimationFrame(loop);
     }
 
@@ -103,6 +114,12 @@
         currentDetected = null;
         document.getElementById("detectedObject").textContent = `Detected: (none)`;
         document.getElementById("confirmBtn").disabled = true;
+
+        // Add delay if it's an empty slot
+        isDelaying = true;
+        setTimeout(() => {
+          isDelaying = false;
+        }, 1000); // 1 second delay
       }
     }
 
@@ -119,11 +136,11 @@
         await port.open({ baudRate: 9600 });
 
         const textDecoder = new TextDecoderStream();
-        const readableClosed = port.readable.pipeTo(textDecoder.writable);
+        port.readable.pipeTo(textDecoder.writable);
         reader = textDecoder.readable.getReader();
 
         const textEncoder = new TextEncoderStream();
-        const writableClosed = textEncoder.readable.pipeTo(port.writable);
+        textEncoder.readable.pipeTo(port.writable);
         writer = textEncoder.writable.getWriter();
 
         readSlotState();
@@ -144,8 +161,9 @@
           const match = line.match(/Slot (\d+)/);
           if (match && confirmedObject) {
             const slot = parseInt(match[1]) - 1;
-            if (slot >= 0 && slot < 8) {
-              slotStates[slot] = confirmedObject;
+            const index = currentPage * pageSize + slot;
+            if (index >= 0 && index < slotStates.length) {
+              slotStates[index] = confirmedObject;
               updateSlotDisplay();
             }
           }
@@ -156,12 +174,15 @@
     function updateSlotDisplay() {
       const slotList = document.getElementById("slotList");
       slotList.innerHTML = "";
-      for (let i = 0; i < 8; i++) {
-        const label = slotStates[i];
+      const start = currentPage * pageSize;
+      for (let i = 0; i < pageSize; i++) {
+        const index = start + i;
+        const label = slotStates[index];
         const li = document.createElement("li");
-        li.textContent = label ? `Slot ${i + 1}: ${label}` : `Slot ${i + 1}: (empty)`;
+        li.textContent = label ? `Slot ${index + 1}: ${label}` : `Slot ${index + 1}: (empty)`;
         slotList.appendChild(li);
       }
+      document.getElementById("pageIndicator").textContent = `Page ${currentPage + 1}`;
     }
 
     function playSound(instrument, note) {
@@ -171,7 +192,7 @@
     }
 
     async function playSequence() {
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < slotStates.length; i++) {
         const label = slotStates[i];
         if (label) {
           const parts = label.split(":");
@@ -185,6 +206,41 @@
         }
       }
     }
+
+    // Page Navigation
+    document.getElementById("prevPage").addEventListener("click", () => {
+      if (currentPage > 0) {
+        currentPage--;
+        updateSlotDisplay();
+      }
+    });
+
+    document.getElementById("nextPage").addEventListener("click", () => {
+      currentPage++;
+      const requiredLength = (currentPage + 1) * pageSize;
+      if (slotStates.length < requiredLength) {
+        slotStates = slotStates.concat(Array(pageSize).fill(null));
+      }
+      updateSlotDisplay();
+    });
+
+    // Reset
+    document.getElementById("resetSlot").addEventListener("click", () => {
+      const slotNum = prompt("Enter slot number on this page (1-8) to reset:");
+      const index = currentPage * pageSize + (parseInt(slotNum) - 1);
+      if (index >= 0 && index < slotStates.length) {
+        slotStates[index] = null;
+        updateSlotDisplay();
+      }
+    });
+
+    document.getElementById("resetAll").addEventListener("click", () => {
+      if (confirm("Are you sure you want to reset all slots?")) {
+        slotStates.fill(null);
+        currentPage = 0;
+        updateSlotDisplay();
+      }
+    });
 
     document.getElementById("connect").addEventListener("click", connectToArduino);
     document.getElementById("play").addEventListener("click", playSequence);
