@@ -33,8 +33,12 @@
 <body>
   <h1>🎵 RhythmBeats: Music Composition Board</h1>
 
-  <!-- Webcam canvas -->
   <canvas id="canvas" width="224" height="224"></canvas><br>
+
+  <!-- Live Detection & Confirmation -->
+  <p id="detectedObject">Detected: (none)</p>
+  <button id="confirmBtn" disabled>✅ Confirm Selection</button>
+  <p id="selectedObject">Selected: (none)</p>
 
   <!-- Controls -->
   <button id="connect">🔌 Connect Arduino</button>
@@ -43,30 +47,29 @@
 
   <!-- Slot Display -->
   <div id="slotDisplay">
-  <h3>🎶 Slot Assignments</h3>
-  <ul id="slotList">
-    <li>Slot 1: (empty)</li>
-    <li>Slot 2: (empty)</li>
-    <li>Slot 3: (empty)</li>
-    <li>Slot 4: (empty)</li>
-    <li>Slot 5: (empty)</li>
-    <li>Slot 6: (empty)</li>
-    <li>Slot 7: (empty)</li>
-    <li>Slot 8: (empty)</li>
-  </ul>
-</div>
-
-
+    <h3>🎶 Slot Assignments</h3>
+    <ul id="slotList">
+      <li>Slot 1: (empty)</li>
+      <li>Slot 2: (empty)</li>
+      <li>Slot 3: (empty)</li>
+      <li>Slot 4: (empty)</li>
+      <li>Slot 5: (empty)</li>
+      <li>Slot 6: (empty)</li>
+      <li>Slot 7: (empty)</li>
+      <li>Slot 8: (empty)</li>
+    </ul>
+  </div>
 
   <!-- TensorFlow + Teachable Machine -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.4/dist/teachablemachine-image.min.js"></script>
 
   <script>
-    const URL = "model/"; // Your model folder containing model.json, metadata.json, weights.bin
+    const URL = "old_model/"; // Your Teachable Machine model path
     let model, webcam, port, reader, writer;
-    const slotStates = Array(8).fill(null);  // Slot 0-7 (Slot 1 = index 0)
-    let currentDetected = "";
+    const slotStates = Array(8).fill(null);  // Slot 0-7
+    let currentDetected = null;
+    let confirmedObject = null;
 
     async function init() {
       try {
@@ -91,27 +94,36 @@
     async function predict() {
       const prediction = await model.predict(webcam.canvas);
       const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
-      if (top.probability > 0.85) {
-        const label = top.className.trim(); // e.g. "BlueCubeWithC : Piano C"
-        
-        if (label.includes("Empty") || label.includes("None")) {
-          currentDetected = null;
-        } else {
-          currentDetected = label;
-        }
+
+      if (top.probability > 0.85 && !top.className.includes("Empty") && !top.className.includes("None")) {
+        currentDetected = top.className.trim();
+        document.getElementById("detectedObject").textContent = `Detected: ${currentDetected}`;
+        document.getElementById("confirmBtn").disabled = false;
+      } else {
+        currentDetected = null;
+        document.getElementById("detectedObject").textContent = `Detected: (none)`;
+        document.getElementById("confirmBtn").disabled = true;
       }
     }
+
+    document.getElementById("confirmBtn").addEventListener("click", () => {
+      if (currentDetected) {
+        confirmedObject = currentDetected;
+        document.getElementById("selectedObject").textContent = `Selected: ${confirmedObject}`;
+      }
+    });
 
     async function connectToArduino() {
       try {
         port = await navigator.serial.requestPort();
         await port.open({ baudRate: 9600 });
+
         const textDecoder = new TextDecoderStream();
-        const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+        const readableClosed = port.readable.pipeTo(textDecoder.writable);
         reader = textDecoder.readable.getReader();
 
         const textEncoder = new TextEncoderStream();
-        const writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+        const writableClosed = textEncoder.readable.pipeTo(port.writable);
         writer = textEncoder.writable.getWriter();
 
         readSlotState();
@@ -123,53 +135,34 @@
     }
 
     async function readSlotState() {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const line = value.trim();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const line = value.trim();
 
-      if (line.startsWith("Slot")) {
-        const match = line.match(/Slot (\d+)/);
-        if (match) {
-          const slot = parseInt(match[1]) - 1;
-          if (slot >= 0 && slot < 8) {
-
-            // 🌟 Get a fresh prediction from webcam when the slot is triggered
-            const prediction = await model.predict(webcam.canvas);
-            const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
-
-            if (top.probability > 0.85 && !top.className.includes("Empty") && !top.className.includes("None")) {
-              slotStates[slot] = top.className.trim();
-            } else {
-              slotStates[slot] = null; // Treat it as empty if confidence is low or it's an empty label
+        if (line.startsWith("Slot")) {
+          const match = line.match(/Slot (\d+)/);
+          if (match && confirmedObject) {
+            const slot = parseInt(match[1]) - 1;
+            if (slot >= 0 && slot < 8) {
+              slotStates[slot] = confirmedObject;
+              updateSlotDisplay();
             }
-
-            updateSlotDisplay();
           }
         }
       }
     }
-  }
 
-
-  function updateSlotDisplay() {
-    const slotList = document.getElementById("slotList");
-    slotList.innerHTML = ""; // Clear the list
-
-    for (let i = 0; i < 8; i++) {
-      const label = slotStates[i];
-      const li = document.createElement("li");
-
-      // LED ON = Cube present = Show note name
-      if (label) {
-        li.textContent = `Slot ${i + 1}: ${label}`;
-      } else {
-        li.textContent = `Slot ${i + 1}: (empty)`;
+    function updateSlotDisplay() {
+      const slotList = document.getElementById("slotList");
+      slotList.innerHTML = "";
+      for (let i = 0; i < 8; i++) {
+        const label = slotStates[i];
+        const li = document.createElement("li");
+        li.textContent = label ? `Slot ${i + 1}: ${label}` : `Slot ${i + 1}: (empty)`;
+        slotList.appendChild(li);
       }
-
-      slotList.appendChild(li);
     }
-  }
 
     function playSound(instrument, note) {
       const audio = new Audio(`sounds/${instrument}/${note}.mp3`);
@@ -178,31 +171,20 @@
     }
 
     async function playSequence() {
-    for (let i = 0; i < 8; i++) {
-      // Perform a fresh prediction
-      const prediction = await model.predict(webcam.canvas);
-      const top = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
-
-      if (top.probability > 0.8) {
-        const label = top.className.trim();
-
-        if (!label.includes("Empty") || !label.includes("None")) {
+      for (let i = 0; i < 8; i++) {
+        const label = slotStates[i];
+        if (label) {
           const parts = label.split(":");
           if (parts.length > 1) {
             const [instrument, note] = parts[1].trim().split(" ");
             playSound(instrument.toLowerCase(), note.toUpperCase());
             await new Promise(resolve => setTimeout(resolve, 800));
           }
+        } else {
+          console.log(`Slot ${i + 1} is empty`);
         }
-      } else {
-        console.log(`Slot ${i + 1}: No confident prediction.`);
       }
-
-      // Wait a little before the next prediction to allow time for camera input to change
-      await new Promise(resolve => setTimeout(resolve, 200));
     }
-  }
-
 
     document.getElementById("connect").addEventListener("click", connectToArduino);
     document.getElementById("play").addEventListener("click", playSequence);
