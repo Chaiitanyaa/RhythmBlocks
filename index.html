@@ -12,7 +12,7 @@
       margin-top: 10px;
       border: 1px solid #ccc;
     }
-    #slotNotesList {
+    #slotList {
       margin-top: 20px;
       list-style: none;
       padding: 0;
@@ -35,25 +35,19 @@
 
   <canvas id="canvas" width="224" height="224"></canvas><br>
 
-  <!-- Live Detection & Confirmation -->
   <p id="detectedObject">Detected: (none)</p>
   <button id="confirmBtn" disabled>✅ Confirm Selection</button>
   <p id="selectedObject">Selected: (none)</p>
 
-  <!-- Controls -->
   <button id="connect">🔌 Connect Arduino</button>
   <button id="play">▶️ Play Sequence</button>
   <p id="status">Status: Not connected</p>
 
-  <!-- Slot Display -->
   <div id="slotDisplay">
     <h3>🎶 Slot Assignments</h3>
-    <ul id="slotList">
-      <!-- Dynamically updated -->
-    </ul>
+    <ul id="slotList"></ul>
   </div>
 
-  <!-- Pagination and Reset Controls -->
   <div>
     <button id="prevPage">⬅️ Previous</button>
     <span id="pageIndicator">Page 1</span>
@@ -71,10 +65,10 @@
 
   <script>
     const URL = "model/";
-    let model, webcam, port, reader, writer;
-    let slotStates = Array(16).fill(null); // Start with 2 pages of 8
-    let currentPage = 0;
     const pageSize = 8;
+    let model, webcam, port, reader, writer;
+    let slotStates = Array(16).fill(null);
+    let currentPage = 0;
     let currentDetected = null;
     let confirmedObject = null;
 
@@ -88,17 +82,12 @@
         window.requestAnimationFrame(loop);
       } catch (err) {
         document.getElementById("status").textContent = "❌ Webcam error: " + err.message;
-        console.error(err);
       }
     }
 
-    let isDelaying = false; // Add a flag to avoid re-entering loop too fast
-
     async function loop() {
-      if (!isDelaying) {
-        webcam.update();
-        await predict();
-      }
+      webcam.update();
+      await predict();
       window.requestAnimationFrame(loop);
     }
 
@@ -114,12 +103,6 @@
         currentDetected = null;
         document.getElementById("detectedObject").textContent = `Detected: (none)`;
         document.getElementById("confirmBtn").disabled = true;
-
-        // Add delay if it's an empty slot
-        isDelaying = true;
-        setTimeout(() => {
-          isDelaying = false;
-        }, 1000); // 1 second delay
       }
     }
 
@@ -147,7 +130,6 @@
         document.getElementById("status").textContent = "✅ Connected to Arduino";
       } catch (err) {
         document.getElementById("status").textContent = "❌ Connection failed";
-        console.error("Serial connection failed:", err);
       }
     }
 
@@ -156,13 +138,14 @@
         const { value, done } = await reader.read();
         if (done) break;
         const line = value.trim();
+        console.log("Serial:", line);
 
-        if (line.startsWith("Slot")) {
-          const match = line.match(/Slot (\d+)/);
-          if (match && confirmedObject) {
-            const slot = parseInt(match[1]) - 1;
-            const index = currentPage * pageSize + slot;
-            if (index >= 0 && index < slotStates.length) {
+        const match = line.match(/^Slot (\d+) ON$/);
+        if (match && confirmedObject) {
+          const slotNum = parseInt(match[1], 10); // 1–8
+          if (slotNum >= 1 && slotNum <= pageSize) {
+            const index = currentPage * pageSize + (slotNum - 1);
+            if (index < slotStates.length) {
               slotStates[index] = confirmedObject;
               updateSlotDisplay();
             }
@@ -188,7 +171,6 @@
     function playSound(instrument, note) {
       const audio = new Audio(`sounds/${instrument}/${note}.mp3`);
       audio.play();
-      console.log(`Playing: ${instrument}/${note}`);
     }
 
     async function playSequence() {
@@ -199,15 +181,14 @@
           if (parts.length > 1) {
             const [instrument, note] = parts[1].trim().split(" ");
             playSound(instrument.toLowerCase(), note.toUpperCase());
-            await new Promise(resolve => setTimeout(resolve, 800));
+            await new Promise(r => setTimeout(r, 800));
           }
         } else {
-          console.log(`Slot ${i + 1} is empty`);
+          await new Promise(r => setTimeout(r, 2000));
         }
       }
     }
 
-    // Page Navigation
     document.getElementById("prevPage").addEventListener("click", () => {
       if (currentPage > 0) {
         currentPage--;
@@ -217,25 +198,25 @@
 
     document.getElementById("nextPage").addEventListener("click", () => {
       currentPage++;
-      const requiredLength = (currentPage + 1) * pageSize;
-      if (slotStates.length < requiredLength) {
+      const required = (currentPage + 1) * pageSize;
+      if (slotStates.length < required) {
         slotStates = slotStates.concat(Array(pageSize).fill(null));
       }
       updateSlotDisplay();
     });
 
-    // Reset
     document.getElementById("resetSlot").addEventListener("click", () => {
-      const slotNum = prompt("Enter slot number on this page (1-8) to reset:");
-      const index = currentPage * pageSize + (parseInt(slotNum) - 1);
-      if (index >= 0 && index < slotStates.length) {
+      const num = prompt("Reset slot # (1–8 on this page):");
+      const n = parseInt(num);
+      if (n >= 1 && n <= 8) {
+        const index = currentPage * pageSize + (n - 1);
         slotStates[index] = null;
         updateSlotDisplay();
       }
     });
 
     document.getElementById("resetAll").addEventListener("click", () => {
-      if (confirm("Are you sure you want to reset all slots?")) {
+      if (confirm("Reset all slots?")) {
         slotStates.fill(null);
         currentPage = 0;
         updateSlotDisplay();
